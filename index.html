@@ -7,6 +7,12 @@
     <meta name="description" content="0xLocal - Neighborhood loyalty rewards platform">
     <title>0xLocal - Love Living Locally</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+// Initialize Supabase
+const supabaseUrl = 'https://irzvspsfgqwanzhnghcc.supabase.co';
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV4eXd3amVxbXFndXZyYnh4bXduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU1Njc2NjQsImV4cCI6MjA3MTE0MzY2NH0.QtCErDc4lBS8oYq0197iuw1tDYv19htCLm0KgKjr3Ms'; // Replace with your real anon key
+const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+</script>
     <style>
         * {
             margin: 0;
@@ -1227,11 +1233,78 @@
             console.log('Supabase integration ready');
         }
 
+       // Contact modal handlers
+        document.getElementById('close-contact-modal').addEventListener('click', () => {
+            document.getElementById('contact-modal').classList.add('hidden');
+        });
+
+        document.getElementById('send-contact-btn').addEventListener('click', async () => {
+            const name = document.getElementById('contact-name').value;
+            const email = document.getElementById('contact-email').value;
+            const message = document.getElementById('contact-message').value;
+            
+            if (!name || !email || !message) {
+                alert('Please fill in all fields');
+                return;
+            }
+            
+            try {
+                const response = await supabase.functions.invoke('send-contact-email', {
+                    body: { name, email, message }
+                });
+                
+                if (response.error) throw response.error;
+                
+                alert('Message sent successfully!');
+                document.getElementById('contact-modal').classList.add('hidden');
+                // Clear form
+                document.getElementById('contact-name').value = '';
+                document.getElementById('contact-email').value = '';
+                document.getElementById('contact-message').value = '';
+                
+            } catch (error) {
+                alert('Failed to send message: ' + error.message);
+            }
+        });
+
+        // Temporary: Ctrl+C to open contact modal for testing
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'c' && e.ctrlKey) {
+                document.getElementById('contact-modal').classList.remove('hidden');
+            }
+        });
+
         // Start the app
         document.addEventListener('DOMContentLoaded', () => {
             console.log('0xLocal app initialized');
             // App starts with auth screen visible
         });
     </script>
+    <!-- Add this right before </body> -->
+    <!-- Contact Modal -->
+    <div id="contact-modal" class="modal hidden">
+        <div class="modal-content">
+            <button class="close-btn" id="close-contact-modal">&times;</button>
+            <div class="modal-title">Contact Us</div>
+            
+            <div class="input-group">
+                <label class="input-label">Your Name</label>
+                <input type="text" class="input-field" id="contact-name" placeholder="Enter your name">
+            </div>
+            
+            <div class="input-group">
+                <label class="input-label">Your Email</label>
+                <input type="email" class="input-field" id="contact-email" placeholder="Enter your email">
+            </div>
+            
+            <div class="input-group">
+                <label class="input-label">Message</label>
+                <textarea class="input-field" id="contact-message" placeholder="How can we help you?" rows="4"></textarea>
+            </div>
+            
+            <button class="auth-btn" id="send-contact-btn">Send Message</button>
+        </div>
+    </div>
+</body>
 </body>
 </html>
