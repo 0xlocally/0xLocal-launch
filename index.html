@@ -12,6 +12,36 @@
 const supabaseUrl = 'https://irzvspsfgqwanzhnghcc.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV4eXd3amVxbXFndXZyYnh4bXduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU1Njc2NjQsImV4cCI6MjA3MTE0MzY2NH0.QtCErDc4lBS8oYq0197iuw1tDYv19htCLm0KgKjr3Ms'; // Replace with your real anon key
 const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+// Listen for auth changes
+supabase.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_IN' && session) {
+        // User signed in - get their profile
+        const { data: profile, error } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+        
+        if (profile) {
+            currentUser = profile;
+            userPoints = profile.points || 0;
+            userStatus = profile.status || 'Bronze';
+            
+            // Hide auth screen, show main app
+            authScreen.classList.add('hidden');
+            mainApp.classList.remove('hidden');
+            initializeApp();
+        } else {
+            // Profile doesn't exist yet - this shouldn't happen with our trigger
+            console.log('No profile found for user');
+        }
+    } else if (event === 'SIGNED_OUT') {
+        // User signed out
+        currentUser = null;
+        authScreen.classList.remove('hidden');
+        mainApp.classList.add('hidden');
+    }
+});
 </script>
     <style>
         * {
@@ -1128,11 +1158,15 @@ const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
             enterDemoMode();
         });
 
-        googleSigninBtn.addEventListener('click', () => {
-            // Placeholder for Google Auth integration
-            alert('Google Sign-In will be integrated with Supabase Auth');
-            enterDemoMode();
-        });
+       googleSigninBtn.addEventListener('click', async () => {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+            redirectTo: window.location.origin
+        }
+    });
+    if (error) console.error('Auth error:', error);
+});
 
         loginBtn.addEventListener('click', () => {
             // Placeholder for email/password auth
@@ -1140,32 +1174,55 @@ const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
             enterDemoMode();
         });
 
-        function enterDemoMode() {
-            isAuthenticated = true;
-            authScreen.classList.add('hidden');
-            mainApp.classList.remove('hidden');
-            
-            // Initialize demo data
-            initializeApp();
+       function enterDemoMode() {
+    isAuthenticated = true;
+    currentUser = {
+        id: 'demo-user',
+        email: 'demo@example.com',
+        user_type: 'consumer',
+        points: 1247,
+        status: 'Platinum'
+    };
+    userPoints = 1247;
+    userStatus = 'Platinum';
+    
+    authScreen.classList.add('hidden');
+    mainApp.classList.remove('hidden');
+    initializeApp();
+}
         }
 
-        function initializeApp() {
-            // Update user display
-            document.getElementById('user-points').textContent = userPoints.toLocaleString();
-            document.getElementById('user-status').textContent = userStatus;
-            
-            // Set up navigation
-            setupNavigation();
-            
-            // Set up action buttons
-            setupActionButtons();
-            
-            // Show welcome notification
-            setTimeout(() => {
-                showNotification('Welcome to 0xLocal! Start earning points at local businesses.');
-            }, 1000);
-        }
+     function initializeApp() {
+    // Update user display (works for both demo and real users)
+    document.getElementById('user-points').textContent = userPoints.toLocaleString();
+    document.getElementById('user-status').textContent = userStatus;
+    
+    // Set up navigation
+    setupNavigation();
+    
+    // Set up action buttons
+    setupActionButtons();
+    
+    // Load appropriate content based on user type
+    if (currentUser && currentUser.id !== 'demo-user') {
+        // Real user - could load real data in future
+        loadRealUserData();
+    }
+    
+    // Show welcome notification
+    setTimeout(() => {
+        const message = currentUser.id === 'demo-user' 
+            ? 'Welcome to the 0xLocal demo! Explore all features.' 
+            : 'Welcome to 0xLocal! Start earning points at local businesses.';
+        showNotification(message);
+    }, 1000);
+}
 
+async function loadRealUserData() {
+    // For now, keep using the hardcoded business cards
+    // Later you can load real user transaction history, personalized offers, etc.
+    console.log('Loading real user data for:', currentUser.email);
+}
         function setupNavigation() {
             navItems.forEach(item => {
                 item.addEventListener('click', () => {
@@ -1232,7 +1289,42 @@ const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
             // Supabase client initialization will be added here
             console.log('Supabase integration ready');
         }
-
+async function updateUserPoints(pointsToAdd, description = 'Points earned') {
+    if (!currentUser || currentUser.id === 'demo-user') {
+        // Demo mode - just update locally
+        userPoints += pointsToAdd;
+        document.getElementById('user-points').textContent = userPoints.toLocaleString();
+        showNotification(`Demo: +${pointsToAdd} points earned!`);
+        return;
+    }
+    
+    // Real user - update database
+    const { error } = await supabase.rpc('award_points_to_user', {
+        target_user_id: currentUser.id,
+        points_to_add: pointsToAdd,
+        description_param: description
+    });
+    
+    if (!error) {
+        // Refresh user data
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', currentUser.id)
+            .single();
+        
+        if (profile) {
+            currentUser = profile;
+            userPoints = profile.points;
+            userStatus = profile.status;
+            
+            // Update UI
+            document.getElementById('user-points').textContent = userPoints.toLocaleString();
+            document.getElementById('user-status').textContent = userStatus;
+            showNotification(`+${pointsToAdd} points earned!`);
+        }
+    }
+}
        // Contact modal handlers
         document.getElementById('close-contact-modal').addEventListener('click', () => {
             document.getElementById('contact-modal').classList.add('hidden');
