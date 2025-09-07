@@ -1250,9 +1250,18 @@ async function loadRealUserData() {
         }
 
         function setupActionButtons() {
-            document.getElementById('earn-btn').addEventListener('click', () => {
-                alert('Receipt scanning feature coming soon!\n\nYou\'ll be able to:\n• Snap photos of receipts\n• Automatically earn points\n• Track your local spending');
-            });
+    document.getElementById('earn-btn').addEventListener('click', () => {
+        if (currentUser.id === 'demo-user') {
+            alert('Receipt scanning feature coming soon!\n\nYou\'ll be able to:\n• Snap photos of receipts\n• Automatically earn points\n• Track your local spending');
+        } else {
+            // Real user - could open actual receipt upload modal
+            alert('Receipt upload feature coming soon for live users!');
+        }
+    });
+
+    // Keep existing redeem and status click handlers as they are
+    // ... rest of your existing setupActionButtons code
+}
 
             document.getElementById('redeem-btn').addEventListener('click', () => {
                 alert('Reward redemption coming soon!\n\nYou\'ll be able to:\n• Redeem points for discounts\n• Get exclusive local deals\n• Access member-only perks');
