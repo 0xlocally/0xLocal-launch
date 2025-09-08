@@ -43,7 +43,658 @@ supabase.auth.onAuthStateChange(async (event, session) => {
     }
 });
 </script>
+       <script>
+        // Initialize app state
+        let currentUser = null;
+        let userPoints = 1247;
+        let userStatus = 'Platinum';
+        let isAuthenticated = false;
+
+// Status meter functions
+function openStatusMeter() {
+    document.getElementById('status-meter-content').classList.remove('hidden');
+    document.getElementById('app-container').style.display = 'none';
+}
+
+function closeStatusMeter() {
+    document.getElementById('status-meter-content').classList.add('hidden');
+    document.getElementById('app-container').style.display = 'flex';
+}
+
+// Add event listeners when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    // Status card click
+    document.querySelector('.status-card')?.addEventListener('click', openStatusMeter);
+    
+    // Back button click
+    document.getElementById('status-back-btn')?.addEventListener('click', closeStatusMeter);
+});
+        // Receipt scanner variables
+        let currentStream = null;
+        let capturedImage = null;
+
+        // Receipt Scanner Elements (add after DOM elements section)
+        const receiptScannerModal = document.getElementById('receipt-scanner-modal');
+        const closeScannerModal = document.getElementById('close-scanner-modal');
+        const cameraContainer = document.getElementById('camera-container');
+        const cameraFeed = document.getElementById('camera-feed');
+        const cameraPlaceholder = document.getElementById('camera-placeholder');
+        const capturePhotoBtn = document.getElementById('capture-photo-btn');
+        const receiptFileInput = document.getElementById('receipt-file-input');
+        const previewContainer = document.getElementById('preview-container');
+        const receiptPreview = document.getElementById('receipt-preview');
+        const receiptTotal = document.getElementById('receipt-total');
+        const pointsPreview = document.getElementById('points-preview');
+        const businessSelect = document.getElementById('business-select');
+        const otherBusinessGroup = document.getElementById('other-business-group');
+        const otherBusinessName = document.getElementById('other-business-name');
+        const submitReceiptBtn = document.getElementById('submit-receipt-btn');
+        const uploadProgress = document.getElementById('upload-progress');
+        const uploadProgressBar = document.getElementById('upload-progress-bar');
+
+        // Image compression function
+        function compressImage(file, maxSizeKB = 750, quality = 0.8) {
+            return new Promise((resolve) => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const img = new Image();
+                
+                img.onload = function() {
+                    let { width, height } = img;
+                    const maxDimension = 1200;
+                    
+                    if (width > height && width > maxDimension) {
+                        height = (height * maxDimension) / width;
+                        width = maxDimension;
+                    } else if (height > maxDimension) {
+                        width = (width * maxDimension) / height;
+                        height = maxDimension;
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    canvas.toBlob((blob) => {
+                        if (blob.size > maxSizeKB * 1024 && quality > 0.1) {
+                            compressImage(file, maxSizeKB, quality - 0.1).then(resolve);
+                        } else {
+                            resolve(blob);
+                        }
+                    }, 'image/jpeg', quality);
+                };
+                
+                img.src = URL.createObjectURL(file);
+            });
+        }
+        function setupReceiptScanner() {
+            // Camera initialization
+            cameraContainer.addEventListener('click', initializeCamera);
+            
+            // Modal controls
+            closeScannerModal.addEventListener('click', () => {
+                receiptScannerModal.classList.add('hidden');
+                stopCamera();
+                resetScanner();
+            });
+
+            // File input
+            receiptFileInput.addEventListener('change', handleFileUpload);
+            
+            // Capture button
+            capturePhotoBtn.addEventListener('click', capturePhoto);
+            
+            // Form controls
+            receiptTotal.addEventListener('input', updatePointsPreview);
+            businessSelect.addEventListener('change', handleBusinessSelect);
+            submitReceiptBtn.addEventListener('click', submitReceipt);
+        }
+
+        async function initializeCamera() {
+            try {
+                currentStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        facingMode: 'environment',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    } 
+                });
+                
+                cameraFeed.srcObject = currentStream;
+                cameraFeed.classList.remove('hidden');
+                cameraPlaceholder.classList.add('hidden');
+                capturePhotoBtn.disabled = false;
+                
+            } catch (error) {
+                console.error('Camera access denied:', error);
+                cameraPlaceholder.textContent = '📁 Camera not available - use file upload instead';
+            }
+        }
+
+        function stopCamera() {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+                currentStream = null;
+            }
+            cameraFeed.classList.add('hidden');
+            cameraPlaceholder.classList.remove('hidden');
+            cameraPlaceholder.textContent = '📷 Tap to enable camera';
+            capturePhotoBtn.disabled = true;
+        }
+
+        function capturePhoto() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            canvas.width = cameraFeed.videoWidth;
+            canvas.height = cameraFeed.videoHeight;
+            ctx.drawImage(cameraFeed, 0, 0);
+            
+            canvas.toBlob((blob) => {
+                processReceiptImage(blob);
+                stopCamera();
+            }, 'image/jpeg', 0.8);
+        }
+
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (file && file.type.startsWith('image/')) {
+                const compressedBlob = await compressImage(file);
+                processReceiptImage(compressedBlob);
+            }
+        }
+
+        function processReceiptImage(imageBlob) {
+            capturedImage = imageBlob;
+            const imageUrl = URL.createObjectURL(imageBlob);
+            
+            receiptPreview.src = imageUrl;
+            previewContainer.classList.remove('hidden');
+            
+            const sizeKB = Math.round(imageBlob.size / 1024);
+            console.log(`Image compressed to ${sizeKB}KB`);
+            
+            updateSubmitButton();
+        }
+
+        function updatePointsPreview() {
+            const total = parseFloat(receiptTotal.value) || 0;
+            const points = Math.floor(total * 15); // 0.15 points per dollar = 15 points per $100
+            pointsPreview.value = points;
+            updateSubmitButton();
+        }
+
+        function handleBusinessSelect() {
+            const isOther = businessSelect.value === 'other';
+            otherBusinessGroup.style.display = isOther ? 'block' : 'none';
+            updateSubmitButton();
+        }
+
+        function updateSubmitButton() {
+            const hasImage = !!capturedImage;
+            const hasTotal = !!receiptTotal.value && parseFloat(receiptTotal.value) > 0;
+            const hasBusiness = !!businessSelect.value && 
+                (businessSelect.value !== 'other' || !!otherBusinessName.value);
+            
+            submitReceiptBtn.disabled = !(hasImage && hasTotal && hasBusiness);
+        }
+
+        async function submitReceipt() {
+            if (!capturedImage) return;
+            
+            try {
+                submitReceiptBtn.disabled = true;
+                uploadProgress.classList.remove('hidden');
+                
+                // Simulate upload progress
+                for (let i = 0; i <= 100; i += 10) {
+                    uploadProgressBar.style.width = i + '%';
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+                
+                const receiptData = {
+                    user_id: currentUser.id,
+                    business_name: businessSelect.value === 'other' ? 
+                        otherBusinessName.value : 
+                        businessSelect.options[businessSelect.selectedIndex].text,
+                    total_amount: parseFloat(receiptTotal.value),
+                    points_earned: parseInt(pointsPreview.value),
+                    status: 'pending_approval',
+                    image_size_kb: Math.round(capturedImage.size / 1024)
+                };
+
+                if (currentUser.id === 'demo-user') {
+                    await simulateDemoSubmission(receiptData);
+                } else {
+                    await uploadToSupabase(receiptData, capturedImage);
+                }
+                
+            } catch (error) {
+                console.error('Upload failed:', error);
+                alert('Upload failed. Please try again.');
+                submitReceiptBtn.disabled = false;
+            }
+        }
+
+        async function simulateDemoSubmission(receiptData) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            showNotification(`📸 Demo: Receipt submitted! ${receiptData.points_earned} points pending approval.`);
+            receiptScannerModal.classList.add('hidden');
+            resetScanner();
+        }
+
+        async function uploadToSupabase(receiptData, imageBlob) {
+            // Upload image to Supabase Storage
+            const fileName = `receipt_${Date.now()}_${currentUser.id}.jpg`;
+            const { data: uploadData, error: uploadError } = await supabase.storage
+                .from('receipt-images')
+                .upload(fileName, imageBlob, {
+                    contentType: 'image/jpeg',
+                    upsert: false
+                });
+
+            if (uploadError) throw uploadError;
+
+            // Save receipt data to database
+            const { data, error } = await supabase
+                .from('receipts')
+                .insert([{
+                    ...receiptData,
+                    image_url: uploadData.path
+                }]);
+
+            if (error) throw error;
+
+            showNotification(`Receipt submitted! ${receiptData.points_earned} points pending approval.`);
+            receiptScannerModal.classList.add('hidden');
+            resetScanner();
+        }
+
+        function resetScanner() {
+            capturedImage = null;
+            receiptTotal.value = '';
+            pointsPreview.value = '';
+            businessSelect.value = '';
+            otherBusinessName.value = '';
+            otherBusinessGroup.style.display = 'none';
+            previewContainer.classList.add('hidden');
+            uploadProgress.classList.add('hidden');
+            uploadProgressBar.style.width = '0%';
+            receiptFileInput.value = '';
+            submitReceiptBtn.disabled = true;
+        }
+        
+        // DOM Elements
+        const authScreen = document.getElementById('auth-screen');
+        const mainApp = document.getElementById('main-app');
+        const demoBtn = document.getElementById('demo-btn');
+        const googleSigninBtn = document.getElementById('google-signin-btn');
+        const loginBtn = document.getElementById('login-btn');
+        const navItems = document.querySelectorAll('.nav-item');
+        const tabContents = document.querySelectorAll('[id$="-content"]');
+
+        // Authentication handlers
+        demoBtn.addEventListener('click', () => {
+            enterDemoMode();
+        });
+
+       googleSigninBtn.addEventListener('click', async () => {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+            redirectTo: window.location.origin
+        }
+    });
+    if (error) console.error('Auth error:', error);
+});
+
+        loginBtn.addEventListener('click', () => {
+            // Placeholder for email/password auth
+            alert('Email/password auth will be integrated with Supabase');
+            enterDemoMode();
+        });
+
+       function enterDemoMode() {
+    isAuthenticated = true;
+    currentUser = {
+        id: 'demo-user',
+        email: 'demo@example.com',
+        user_type: 'consumer',
+        points: 1247,
+        status: 'Platinum'
+    };
+    userPoints = 1247;
+    userStatus = 'Platinum';
+    
+    authScreen.classList.add('hidden');
+    mainApp.classList.remove('hidden');
+    initializeApp();
+}
+
+function initializeApp() {
+    // Update user display (works for both demo and real users)
+    document.getElementById('user-points').textContent = userPoints.toLocaleString();
+    document.getElementById('user-status').textContent = userStatus;
+    
+    // Set up navigation
+    setupNavigation();
+    
+    // Set up action buttons  
+    setupActionButtons();
+    
+    // Set up receipt scanner
+    setupReceiptScanner();
+    
+    // Load appropriate content based on user type
+    if (currentUser && currentUser.id !== 'demo-user') {
+        // Real user - could load real data in future
+        loadRealUserData();
+    }
+    
+    // Show welcome notification
+    setTimeout(() => {
+        const message = currentUser.id === 'demo-user' 
+            ? 'Welcome to the 0xLocal demo! Explore all features.' 
+            : 'Welcome to 0xLocal! Start earning points at local businesses.';
+        showNotification(message);
+    }, 1000);
+}
+
+async function loadRealUserData() {
+    // For now, keep using the hardcoded business cards
+    // Later you can load real user transaction history, personalized offers, etc.
+    console.log('Loading real user data for:', currentUser.email);
+}
+        function setupNavigation() {
+            navItems.forEach(item => {
+                item.addEventListener('click', () => {
+                    const tab = item.dataset.tab;
+                    switchTab(tab);
+                });
+            });
+        }
+
+        function switchTab(tab) {
+            // Update nav active state
+            navItems.forEach(item => {
+                item.classList.toggle('active', item.dataset.tab === tab);
+            });
+
+            // Show/hide content
+            tabContents.forEach(content => {
+                const contentId = content.id.replace('-content', '');
+                if (contentId === tab) {
+                    content.classList.remove('hidden');
+                } else {
+                    content.classList.add('hidden');
+                }
+            });
+        }
+
+       function setupActionButtons() {
+    document.getElementById('earn-btn').addEventListener('click', () => {
+        document.getElementById('receipt-scanner-modal').classList.remove('hidden');
+        if (currentUser.id === 'demo-user') {
+            setTimeout(() => {
+                showNotification('📷 Demo Mode: Upload any receipt image to see how points are calculated!');
+            }, 500);
+        }
+    });
+
+    document.getElementById('redeem-btn').addEventListener('click', () => {
+        alert('Reward redemption coming soon!\n\nYou\'ll be able to:\n• Redeem points for discounts\n• Get exclusive local deals\n• Access member-only perks');
+    });
+
+    document.getElementById('status-card-clickable').addEventListener('click', () => {
+        alert('Status details:\n\n🏆 Platinum Member\n• 750-1999 points\n• 1.5x point multiplier\n• VIP access to events\n• Priority customer service');
+    });
+
+    document.getElementById('points-card-clickable').addEventListener('click', () => {
+        alert('Points breakdown:\n\n💰 Current Balance: 1,247 points\n📈 This Month: +127 points\n🎯 Next Tier: 753 points to Diamond\n\nPoints never expire!');
+    });
+}
+
+        function showNotification(message) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.classList.remove('hidden');
+            
+            setTimeout(() => {
+                notification.classList.add('hidden');
+            }, 4000);
+        }
+
+        // Initialize Google Maps API integration placeholder
+        function initializeGoogleMaps() {
+            // Google Maps integration will be added here
+            console.log('Google Maps API integration ready');
+        }
+
+        // Supabase integration placeholder
+        function initializeSupabase() {
+            // Supabase client initialization will be added here
+            console.log('Supabase integration ready');
+        }
+async function updateUserPoints(pointsToAdd, description = 'Points earned') {
+    if (!currentUser || currentUser.id === 'demo-user') {
+        // Demo mode - just update locally
+        userPoints += pointsToAdd;
+        document.getElementById('user-points').textContent = userPoints.toLocaleString();
+        showNotification(`Demo: +${pointsToAdd} points earned!`);
+        return;
+    }
+    
+    // Real user - update database
+    const { error } = await supabase.rpc('award_points_to_user', {
+        target_user_id: currentUser.id,
+        points_to_add: pointsToAdd,
+        description_param: description
+    });
+    
+    if (!error) {
+        // Refresh user data
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', currentUser.id)
+            .single();
+        
+        if (profile) {
+            currentUser = profile;
+            userPoints = profile.points;
+            userStatus = profile.status;
+            
+            // Update UI
+            document.getElementById('user-points').textContent = userPoints.toLocaleString();
+            document.getElementById('user-status').textContent = userStatus;
+            showNotification(`+${pointsToAdd} points earned!`);
+        }
+    }
+}
+       // Contact modal handlers
+        document.getElementById('close-contact-modal').addEventListener('click', () => {
+            document.getElementById('contact-modal').classList.add('hidden');
+        });
+
+        document.getElementById('send-contact-btn').addEventListener('click', async () => {
+            const name = document.getElementById('contact-name').value;
+            const email = document.getElementById('contact-email').value;
+            const message = document.getElementById('contact-message').value;
+            
+            if (!name || !email || !message) {
+                alert('Please fill in all fields');
+                return;
+            }
+            
+            try {
+                const response = await supabase.functions.invoke('send-contact-email', {
+                    body: { name, email, message }
+                });
+                
+                if (response.error) throw response.error;
+                
+                alert('Message sent successfully!');
+                document.getElementById('contact-modal').classList.add('hidden');
+                // Clear form
+                document.getElementById('contact-name').value = '';
+                document.getElementById('contact-email').value = '';
+                document.getElementById('contact-message').value = '';
+                
+            } catch (error) {
+                alert('Failed to send message: ' + error.message);
+            }
+        });
+
+        // Temporary: Ctrl+C to open contact modal for testing
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'c' && e.ctrlKey) {
+                document.getElementById('contact-modal').classList.remove('hidden');
+            }
+        });
+
+        // Start the app
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('0xLocal app initialized');
+            // App starts with auth screen visible
+        });
+
+// Add status card click handler
+document.addEventListener('DOMContentLoaded', function() {
+    const statusCard = document.querySelector('.status-card');
+    if (statusCard) {
+        statusCard.addEventListener('click', openStatusMeter);
+        statusCard.style.cursor = 'pointer';
+    }
+    
+    const backBtn = document.getElementById('status-back-btn');
+    if (backBtn) {
+        backBtn.addEventListener('click', closeStatusMeter);
+    }
+});
+    </script>
     <style>
+        /* Status Meter Page Styles */
+.status-meter-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, #1B4332 0%, #2D5016 50%, #40531B 100%);
+    z-index: 1000;
+    padding: 20px;
+    overflow-y: auto;
+    transition: all 0.3s ease;
+}
+
+.back-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    padding: 12px 20px;
+    color: white;
+    cursor: pointer;
+    margin-bottom: 30px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.back-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.current-status-display {
+    background: linear-gradient(135deg, rgba(229, 228, 226, 0.95) 0%, rgba(192, 192, 192, 0.9) 50%, rgba(229, 228, 226, 0.95) 100%);
+    padding: 25px;
+    border-radius: 20px;
+    color: #1B4332;
+    text-align: center;
+    box-shadow: 0 12px 40px rgba(192, 192, 192, 0.4);
+    border: 2px solid rgba(192, 192, 192, 0.6);
+    backdrop-filter: blur(10px);
+    margin-bottom: 30px;
+    position: relative;
+    overflow: hidden;
+}
+
+.current-status-display::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(45deg, transparent 30%, rgba(255, 255, 255, 0.3) 50%, transparent 70%);
+    animation: shine 4s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.current-status-tier {
+    font-size: 28px;
+    font-weight: 900;
+    margin-bottom: 10px;
+    position: relative;
+    z-index: 2;
+}
+
+.current-status-points {
+    font-size: 20px;
+    font-weight: 700;
+    position: relative;
+    z-index: 2;
+}
+
+.status-tiers {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.tier-item {
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 16px;
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    transition: all 0.3s ease;
+}
+
+.tier-item.current-tier {
+    background: rgba(255, 215, 0, 0.2);
+    border: 2px solid rgba(255, 215, 0, 0.4);
+    box-shadow: 0 8px 25px rgba(255, 215, 0, 0.3);
+}
+
+.tier-icon {
+    font-size: 2rem;
+    width: 50px;
+    text-align: center;
+}
+
+.tier-name {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: white;
+    margin-bottom: 5px;
+}
+
+.tier-requirement {
+    font-size: 0.9rem;
+    opacity: 0.8;
+    color: white;
+}
+
+.hidden {
+    display: none;
+}
         * {
             margin: 0;
             padding: 0;
@@ -1306,6 +1957,7 @@ supabase.auth.onAuthStateChange(async (event, session) => {
                     </div>
                 </div>
             </div>
+            
         </div>
 
         <!-- Bottom Navigation -->
@@ -1327,505 +1979,70 @@ supabase.auth.onAuthStateChange(async (event, session) => {
                 <div class="nav-label">Perks</div>
             </div>
         </div>
+        
+        <!-- Status Meter Page -->
+<div id="status-meter-content" class="hidden status-meter-container">
+    <button class="back-btn" id="status-back-btn">
+        <span>←</span>
+        <span>Back to Home</span>
+    </button>
+
+    <div class="current-status-display">
+        <div class="current-status-tier">🏆 <span id="status-meter-tier">Platinum</span></div>
+        <div class="current-status-points"><span id="status-meter-points">1,247</span> Points</div>
     </div>
 
-    <script>
-        // Initialize app state
-        let currentUser = null;
-        let userPoints = 1247;
-        let userStatus = 'Platinum';
-        let isAuthenticated = false;
+    <div class="status-tiers">
+        <div class="tier-item">
+            <div class="tier-icon">🥉</div>
+            <div class="tier-info">
+                <div class="tier-name">Bronze</div>
+                <div class="tier-requirement">0 - 249 points</div>
+            </div>
+        </div>
 
-        // Receipt scanner variables
-        let currentStream = null;
-        let capturedImage = null;
+        <div class="tier-item">
+            <div class="tier-icon">🥈</div>
+            <div class="tier-info">
+                <div class="tier-name">Silver</div>
+                <div class="tier-requirement">250 - 499 points</div>
+            </div>
+        </div>
 
-        // Receipt Scanner Elements (add after DOM elements section)
-        const receiptScannerModal = document.getElementById('receipt-scanner-modal');
-        const closeScannerModal = document.getElementById('close-scanner-modal');
-        const cameraContainer = document.getElementById('camera-container');
-        const cameraFeed = document.getElementById('camera-feed');
-        const cameraPlaceholder = document.getElementById('camera-placeholder');
-        const capturePhotoBtn = document.getElementById('capture-photo-btn');
-        const receiptFileInput = document.getElementById('receipt-file-input');
-        const previewContainer = document.getElementById('preview-container');
-        const receiptPreview = document.getElementById('receipt-preview');
-        const receiptTotal = document.getElementById('receipt-total');
-        const pointsPreview = document.getElementById('points-preview');
-        const businessSelect = document.getElementById('business-select');
-        const otherBusinessGroup = document.getElementById('other-business-group');
-        const otherBusinessName = document.getElementById('other-business-name');
-        const submitReceiptBtn = document.getElementById('submit-receipt-btn');
-        const uploadProgress = document.getElementById('upload-progress');
-        const uploadProgressBar = document.getElementById('upload-progress-bar');
+        <div class="tier-item">
+            <div class="tier-icon">🥇</div>
+            <div class="tier-info">
+                <div class="tier-name">Gold</div>
+                <div class="tier-requirement">500 - 749 points</div>
+            </div>
+        </div>
 
-        // Image compression function
-        function compressImage(file, maxSizeKB = 750, quality = 0.8) {
-            return new Promise((resolve) => {
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                const img = new Image();
-                
-                img.onload = function() {
-                    let { width, height } = img;
-                    const maxDimension = 1200;
-                    
-                    if (width > height && width > maxDimension) {
-                        height = (height * maxDimension) / width;
-                        width = maxDimension;
-                    } else if (height > maxDimension) {
-                        width = (width * maxDimension) / height;
-                        height = maxDimension;
-                    }
-                    
-                    canvas.width = width;
-                    canvas.height = height;
-                    ctx.drawImage(img, 0, 0, width, height);
-                    
-                    canvas.toBlob((blob) => {
-                        if (blob.size > maxSizeKB * 1024 && quality > 0.1) {
-                            compressImage(file, maxSizeKB, quality - 0.1).then(resolve);
-                        } else {
-                            resolve(blob);
-                        }
-                    }, 'image/jpeg', quality);
-                };
-                
-                img.src = URL.createObjectURL(file);
-            });
-        }
-        function setupReceiptScanner() {
-            // Camera initialization
-            cameraContainer.addEventListener('click', initializeCamera);
-            
-            // Modal controls
-            closeScannerModal.addEventListener('click', () => {
-                receiptScannerModal.classList.add('hidden');
-                stopCamera();
-                resetScanner();
-            });
+        <div class="tier-item current-tier">
+            <div class="tier-icon">🏆</div>
+            <div class="tier-info">
+                <div class="tier-name">Platinum</div>
+                <div class="tier-requirement">750 - 1999 points</div>
+            </div>
+        </div>
 
-            // File input
-            receiptFileInput.addEventListener('change', handleFileUpload);
-            
-            // Capture button
-            capturePhotoBtn.addEventListener('click', capturePhoto);
-            
-            // Form controls
-            receiptTotal.addEventListener('input', updatePointsPreview);
-            businessSelect.addEventListener('change', handleBusinessSelect);
-            submitReceiptBtn.addEventListener('click', submitReceipt);
-        }
+        <div class="tier-item">
+            <div class="tier-icon">💎</div>
+            <div class="tier-info">
+                <div class="tier-name">Diamond</div>
+                <div class="tier-requirement">2,000 - 2,999 points</div>
+            </div>
+        </div>
 
-        async function initializeCamera() {
-            try {
-                currentStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        facingMode: 'environment',
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    } 
-                });
-                
-                cameraFeed.srcObject = currentStream;
-                cameraFeed.classList.remove('hidden');
-                cameraPlaceholder.classList.add('hidden');
-                capturePhotoBtn.disabled = false;
-                
-            } catch (error) {
-                console.error('Camera access denied:', error);
-                cameraPlaceholder.textContent = '📁 Camera not available - use file upload instead';
-            }
-        }
+        <div class="tier-item">
+            <div class="tier-icon">😎</div>
+            <div class="tier-info">
+                <div class="tier-name">Local Legend</div>
+                <div class="tier-requirement">3,000+ points</div>
+            </div>
+        </div>
+    </div>
 
-        function stopCamera() {
-            if (currentStream) {
-                currentStream.getTracks().forEach(track => track.stop());
-                currentStream = null;
-            }
-            cameraFeed.classList.add('hidden');
-            cameraPlaceholder.classList.remove('hidden');
-            cameraPlaceholder.textContent = '📷 Tap to enable camera';
-            capturePhotoBtn.disabled = true;
-        }
-
-        function capturePhoto() {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            
-            canvas.width = cameraFeed.videoWidth;
-            canvas.height = cameraFeed.videoHeight;
-            ctx.drawImage(cameraFeed, 0, 0);
-            
-            canvas.toBlob((blob) => {
-                processReceiptImage(blob);
-                stopCamera();
-            }, 'image/jpeg', 0.8);
-        }
-
-        async function handleFileUpload(event) {
-            const file = event.target.files[0];
-            if (file && file.type.startsWith('image/')) {
-                const compressedBlob = await compressImage(file);
-                processReceiptImage(compressedBlob);
-            }
-        }
-
-        function processReceiptImage(imageBlob) {
-            capturedImage = imageBlob;
-            const imageUrl = URL.createObjectURL(imageBlob);
-            
-            receiptPreview.src = imageUrl;
-            previewContainer.classList.remove('hidden');
-            
-            const sizeKB = Math.round(imageBlob.size / 1024);
-            console.log(`Image compressed to ${sizeKB}KB`);
-            
-            updateSubmitButton();
-        }
-
-        function updatePointsPreview() {
-            const total = parseFloat(receiptTotal.value) || 0;
-            const points = Math.floor(total * 15); // 0.15 points per dollar = 15 points per $100
-            pointsPreview.value = points;
-            updateSubmitButton();
-        }
-
-        function handleBusinessSelect() {
-            const isOther = businessSelect.value === 'other';
-            otherBusinessGroup.style.display = isOther ? 'block' : 'none';
-            updateSubmitButton();
-        }
-
-        function updateSubmitButton() {
-            const hasImage = !!capturedImage;
-            const hasTotal = !!receiptTotal.value && parseFloat(receiptTotal.value) > 0;
-            const hasBusiness = !!businessSelect.value && 
-                (businessSelect.value !== 'other' || !!otherBusinessName.value);
-            
-            submitReceiptBtn.disabled = !(hasImage && hasTotal && hasBusiness);
-        }
-
-        async function submitReceipt() {
-            if (!capturedImage) return;
-            
-            try {
-                submitReceiptBtn.disabled = true;
-                uploadProgress.classList.remove('hidden');
-                
-                // Simulate upload progress
-                for (let i = 0; i <= 100; i += 10) {
-                    uploadProgressBar.style.width = i + '%';
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                }
-                
-                const receiptData = {
-                    user_id: currentUser.id,
-                    business_name: businessSelect.value === 'other' ? 
-                        otherBusinessName.value : 
-                        businessSelect.options[businessSelect.selectedIndex].text,
-                    total_amount: parseFloat(receiptTotal.value),
-                    points_earned: parseInt(pointsPreview.value),
-                    status: 'pending_approval',
-                    image_size_kb: Math.round(capturedImage.size / 1024)
-                };
-
-                if (currentUser.id === 'demo-user') {
-                    await simulateDemoSubmission(receiptData);
-                } else {
-                    await uploadToSupabase(receiptData, capturedImage);
-                }
-                
-            } catch (error) {
-                console.error('Upload failed:', error);
-                alert('Upload failed. Please try again.');
-                submitReceiptBtn.disabled = false;
-            }
-        }
-
-        async function simulateDemoSubmission(receiptData) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            showNotification(`📸 Demo: Receipt submitted! ${receiptData.points_earned} points pending approval.`);
-            receiptScannerModal.classList.add('hidden');
-            resetScanner();
-        }
-
-        async function uploadToSupabase(receiptData, imageBlob) {
-            // Upload image to Supabase Storage
-            const fileName = `receipt_${Date.now()}_${currentUser.id}.jpg`;
-            const { data: uploadData, error: uploadError } = await supabase.storage
-                .from('receipt-images')
-                .upload(fileName, imageBlob, {
-                    contentType: 'image/jpeg',
-                    upsert: false
-                });
-
-            if (uploadError) throw uploadError;
-
-            // Save receipt data to database
-            const { data, error } = await supabase
-                .from('receipts')
-                .insert([{
-                    ...receiptData,
-                    image_url: uploadData.path
-                }]);
-
-            if (error) throw error;
-
-            showNotification(`Receipt submitted! ${receiptData.points_earned} points pending approval.`);
-            receiptScannerModal.classList.add('hidden');
-            resetScanner();
-        }
-
-        function resetScanner() {
-            capturedImage = null;
-            receiptTotal.value = '';
-            pointsPreview.value = '';
-            businessSelect.value = '';
-            otherBusinessName.value = '';
-            otherBusinessGroup.style.display = 'none';
-            previewContainer.classList.add('hidden');
-            uploadProgress.classList.add('hidden');
-            uploadProgressBar.style.width = '0%';
-            receiptFileInput.value = '';
-            submitReceiptBtn.disabled = true;
-        }
-        
-        // DOM Elements
-        const authScreen = document.getElementById('auth-screen');
-        const mainApp = document.getElementById('main-app');
-        const demoBtn = document.getElementById('demo-btn');
-        const googleSigninBtn = document.getElementById('google-signin-btn');
-        const loginBtn = document.getElementById('login-btn');
-        const navItems = document.querySelectorAll('.nav-item');
-        const tabContents = document.querySelectorAll('[id$="-content"]');
-
-        // Authentication handlers
-        demoBtn.addEventListener('click', () => {
-            enterDemoMode();
-        });
-
-       googleSigninBtn.addEventListener('click', async () => {
-    const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-            redirectTo: window.location.origin
-        }
-    });
-    if (error) console.error('Auth error:', error);
-});
-
-        loginBtn.addEventListener('click', () => {
-            // Placeholder for email/password auth
-            alert('Email/password auth will be integrated with Supabase');
-            enterDemoMode();
-        });
-
-       function enterDemoMode() {
-    isAuthenticated = true;
-    currentUser = {
-        id: 'demo-user',
-        email: 'demo@example.com',
-        user_type: 'consumer',
-        points: 1247,
-        status: 'Platinum'
-    };
-    userPoints = 1247;
-    userStatus = 'Platinum';
-    
-    authScreen.classList.add('hidden');
-    mainApp.classList.remove('hidden');
-    initializeApp();
-}
-
-function initializeApp() {
-    // Update user display (works for both demo and real users)
-    document.getElementById('user-points').textContent = userPoints.toLocaleString();
-    document.getElementById('user-status').textContent = userStatus;
-    
-    // Set up navigation
-    setupNavigation();
-    
-    // Set up action buttons  
-    setupActionButtons();
-    
-    // Set up receipt scanner
-    setupReceiptScanner();
-    
-    // Load appropriate content based on user type
-    if (currentUser && currentUser.id !== 'demo-user') {
-        // Real user - could load real data in future
-        loadRealUserData();
-    }
-    
-    // Show welcome notification
-    setTimeout(() => {
-        const message = currentUser.id === 'demo-user' 
-            ? 'Welcome to the 0xLocal demo! Explore all features.' 
-            : 'Welcome to 0xLocal! Start earning points at local businesses.';
-        showNotification(message);
-    }, 1000);
-}
-
-async function loadRealUserData() {
-    // For now, keep using the hardcoded business cards
-    // Later you can load real user transaction history, personalized offers, etc.
-    console.log('Loading real user data for:', currentUser.email);
-}
-        function setupNavigation() {
-            navItems.forEach(item => {
-                item.addEventListener('click', () => {
-                    const tab = item.dataset.tab;
-                    switchTab(tab);
-                });
-            });
-        }
-
-        function switchTab(tab) {
-            // Update nav active state
-            navItems.forEach(item => {
-                item.classList.toggle('active', item.dataset.tab === tab);
-            });
-
-            // Show/hide content
-            tabContents.forEach(content => {
-                const contentId = content.id.replace('-content', '');
-                if (contentId === tab) {
-                    content.classList.remove('hidden');
-                } else {
-                    content.classList.add('hidden');
-                }
-            });
-        }
-
-       function setupActionButtons() {
-    document.getElementById('earn-btn').addEventListener('click', () => {
-        receiptScannerModal.classList.remove('hidden');
-        if (currentUser.id === 'demo-user') {
-            setTimeout(() => {
-                showNotification('📷 Demo Mode: Upload any receipt image to see how points are calculated!');
-            }, 500);
-        }
-    });
-
-    document.getElementById('redeem-btn').addEventListener('click', () => {
-        alert('Reward redemption coming soon!\n\nYou\'ll be able to:\n• Redeem points for discounts\n• Get exclusive local deals\n• Access member-only perks');
-    });
-
-    document.getElementById('status-card-clickable').addEventListener('click', () => {
-        alert('Status details:\n\n🏆 Platinum Member\n• 750-1999 points\n• 1.5x point multiplier\n• VIP access to events\n• Priority customer service');
-    });
-
-    document.getElementById('points-card-clickable').addEventListener('click', () => {
-        alert('Points breakdown:\n\n💰 Current Balance: 1,247 points\n📈 This Month: +127 points\n🎯 Next Tier: 753 points to Diamond\n\nPoints never expire!');
-    });
-}
-
-        function showNotification(message) {
-            const notification = document.getElementById('notification');
-            notification.textContent = message;
-            notification.classList.remove('hidden');
-            
-            setTimeout(() => {
-                notification.classList.add('hidden');
-            }, 4000);
-        }
-
-        // Initialize Google Maps API integration placeholder
-        function initializeGoogleMaps() {
-            // Google Maps integration will be added here
-            console.log('Google Maps API integration ready');
-        }
-
-        // Supabase integration placeholder
-        function initializeSupabase() {
-            // Supabase client initialization will be added here
-            console.log('Supabase integration ready');
-        }
-async function updateUserPoints(pointsToAdd, description = 'Points earned') {
-    if (!currentUser || currentUser.id === 'demo-user') {
-        // Demo mode - just update locally
-        userPoints += pointsToAdd;
-        document.getElementById('user-points').textContent = userPoints.toLocaleString();
-        showNotification(`Demo: +${pointsToAdd} points earned!`);
-        return;
-    }
-    
-    // Real user - update database
-    const { error } = await supabase.rpc('award_points_to_user', {
-        target_user_id: currentUser.id,
-        points_to_add: pointsToAdd,
-        description_param: description
-    });
-    
-    if (!error) {
-        // Refresh user data
-        const { data: profile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', currentUser.id)
-            .single();
-        
-        if (profile) {
-            currentUser = profile;
-            userPoints = profile.points;
-            userStatus = profile.status;
-            
-            // Update UI
-            document.getElementById('user-points').textContent = userPoints.toLocaleString();
-            document.getElementById('user-status').textContent = userStatus;
-            showNotification(`+${pointsToAdd} points earned!`);
-        }
-    }
-}
-       // Contact modal handlers
-        document.getElementById('close-contact-modal').addEventListener('click', () => {
-            document.getElementById('contact-modal').classList.add('hidden');
-        });
-
-        document.getElementById('send-contact-btn').addEventListener('click', async () => {
-            const name = document.getElementById('contact-name').value;
-            const email = document.getElementById('contact-email').value;
-            const message = document.getElementById('contact-message').value;
-            
-            if (!name || !email || !message) {
-                alert('Please fill in all fields');
-                return;
-            }
-            
-            try {
-                const response = await supabase.functions.invoke('send-contact-email', {
-                    body: { name, email, message }
-                });
-                
-                if (response.error) throw response.error;
-                
-                alert('Message sent successfully!');
-                document.getElementById('contact-modal').classList.add('hidden');
-                // Clear form
-                document.getElementById('contact-name').value = '';
-                document.getElementById('contact-email').value = '';
-                document.getElementById('contact-message').value = '';
-                
-            } catch (error) {
-                alert('Failed to send message: ' + error.message);
-            }
-        });
-
-        // Temporary: Ctrl+C to open contact modal for testing
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'c' && e.ctrlKey) {
-                document.getElementById('contact-modal').classList.remove('hidden');
-            }
-        });
-
-        // Start the app
-        document.addEventListener('DOMContentLoaded', () => {
-            console.log('0xLocal app initialized');
-            // App starts with auth screen visible
-        });
-    </script>
+ 
     <!-- Add this right before </body> -->
     <!-- Contact Modal -->
     <div id="contact-modal" class="modal hidden">
